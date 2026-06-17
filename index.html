@@ -78,7 +78,8 @@
   <div class="tips">
     <b>↑ / Espace / Tap haut</b> — voie supérieure<br>
     <b>↓ / Tap bas</b> — voie inférieure<br>
-    Évite les murs · attrape les orbes ✦<br>
+    Évite les murs <b>et les cubes mobiles</b> ▣<br>
+    Attrape <b style="color:#6bff9e">+</b> (points) et <b style="color:#ffe14f">✦</b> (bouclier)<br>
     La vitesse augmente sans cesse !
   </div>
   <button class="btn" id="startBtn">Jouer</button>
@@ -117,7 +118,7 @@
   const STATE = { MENU: 0, PLAY: 1, OVER: 2 };
   let state = STATE.MENU;
   let score = 0, best = +(localStorage.getItem('voidShiftBest') || 0);
-  let speed, dist, lane, playerY, targetY, shake, slowMo, invince, spawnTimer, t;
+  let speed, dist, lane, playerY, targetY, shake, slowMo, invince, spawnTimer, t, bonus;
   let obstacles, orbs, particles, stars;
 
   const scoreVal = document.querySelector('#score .val');
@@ -125,9 +126,9 @@
   bestVal.textContent = best;
 
   function reset() {
-    score = 0; speed = 5.2; dist = 0; t = 0;
+    score = 0; bonus = 0; speed = 4.6; dist = 0; t = 0;
     lane = 0; targetY = midY - laneOffset; playerY = targetY;
-    shake = 0; slowMo = 0; invince = 0; spawnTimer = 0;
+    shake = 0; slowMo = 0; invince = 0; spawnTimer = 30;
     obstacles = []; orbs = []; particles = [];
     stars = Array.from({length: 70}, () => ({
       x: Math.random()*W, y: Math.random()*H,
@@ -155,12 +156,20 @@
   function spawn() {
     const r = Math.random();
     if (r < 0.16 && t > 240) {
-      // power-up orb
+      // power-up orb : points (vert) ou bouclier (jaune)
       const onTop = Math.random() < 0.5;
       orbs.push({ x: W + 40, y: midY + (onTop?-laneOffset:laneOffset),
-                  type: Math.random()<0.5?'slow':'shield', r: 16, pulse:0 });
+                  type: Math.random()<0.5?'points':'shield', r: 16, pulse:0 });
+    } else if (r < 0.34 && t > 360) {
+      // cube mobile qui balaie les deux voies (timing à trouver)
+      const sz = 30 + Math.random()*12;
+      obstacles.push({
+        x: W + 40, cube:true, w: sz, h: sz, y: midY,
+        baseY: midY, amp: laneOffset, freq: 0.045 + Math.random()*0.03,
+        phase: Math.random()*6.28, scored:false
+      });
     } else {
-      // obstacle on one lane (sometimes both with a gap is impossible here -> single lane)
+      // mur fixe sur une voie
       const onTop = Math.random() < 0.5;
       const h = laneOffset * (0.9 + Math.random()*0.5);
       obstacles.push({
@@ -182,14 +191,12 @@
 
   function update(dt) {
     t += dt;
-    const sm = slowMo > 0 ? 0.45 : 1;
-    if (slowMo > 0) slowMo -= dt;
     if (invince > 0) invince -= dt;
 
-    speed += 0.0016 * dt;            // ramp difficulty
-    const v = speed * sm * dt;
+    speed += 0.0011 * dt;            // montée en difficulté plus douce
+    const v = speed * dt;
     dist += v;
-    score = Math.floor(dist / 10);
+    score = Math.floor(dist / 10) + bonus;
     scoreVal.textContent = score;
 
     // player easing
@@ -208,7 +215,7 @@
     spawnTimer -= dt;
     if (spawnTimer <= 0) {
       spawn();
-      spawnTimer = Math.max(34 - speed*1.6, 13);
+      spawnTimer = Math.max(48 - speed*1.4, 24);
     }
 
     // obstacles
@@ -216,6 +223,7 @@
     for (let i=obstacles.length-1;i>=0;i--) {
       const o = obstacles[i];
       o.x -= v;
+      if (o.cube) o.y = o.baseY + Math.sin(t*o.freq + o.phase) * o.amp;
       if (!o.scored && o.x + o.w < playerX) { o.scored = true; }
       // collision (rect vs point-ish)
       if (invince <= 0 &&
@@ -231,7 +239,7 @@
       const o = orbs[i]; o.x -= v; o.pulse += dt*0.15;
       const dx=o.x-playerX, dy=o.y-playerY;
       if (Math.hypot(dx,dy) < o.r+pr) {
-        if (o.type==='slow') { slowMo = 150; burst(o.x,o.y,'#00e5ff',24); }
+        if (o.type==='points') { bonus += 75; burst(o.x,o.y,'#6bff9e',24); }
         else { invince = 200; burst(o.x,o.y,'#ffe14f',24); }
         orbs.splice(i,1); continue;
       }
@@ -291,17 +299,29 @@
 
     // orbs
     for (const o of orbs) {
-      const col = o.type==='slow' ? '#00e5ff' : '#ffe14f';
+      const col = o.type==='points' ? '#6bff9e' : '#ffe14f';
       const pr = o.r + Math.sin(o.pulse)*3;
       ctx.shadowBlur = 25; ctx.shadowColor = col; ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(o.x,o.y,pr,0,7); ctx.fill();
       ctx.shadowBlur = 0; ctx.fillStyle = '#05030f';
-      ctx.font = 'bold 14px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText(o.type==='slow'?'◷':'✦', o.x, o.y+1);
+      ctx.font = 'bold 15px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText(o.type==='points'?'+':'✦', o.x, o.y+1);
     }
 
     // obstacles
     for (const o of obstacles) {
+      if (o.cube) {
+        // cube mobile (violet, légère rotation)
+        ctx.save();
+        ctx.translate(o.x + o.w/2, o.y);
+        ctx.rotate(t*0.05);
+        ctx.shadowBlur = 22; ctx.shadowColor = '#b388ff'; ctx.fillStyle = '#b388ff';
+        roundRect(-o.w/2, -o.h/2, o.w, o.h, 6); ctx.fill();
+        ctx.shadowBlur = 0; ctx.fillStyle = 'rgba(5,3,15,0.5)';
+        roundRect(-o.w/2+5, -o.h/2+5, o.w-10, o.h-10, 4); ctx.fill();
+        ctx.restore();
+        continue;
+      }
       const col = o.lane===0 ? '#00e5ff' : '#ff4fd8';
       ctx.shadowBlur = 18; ctx.shadowColor = col;
       ctx.fillStyle = col;
@@ -327,7 +347,7 @@
       ctx.rotate(t*0.06);
       ctx.shadowBlur = invince>0?35:22; ctx.shadowColor = col;
       ctx.fillStyle = col;
-      const s = 15 + (slowMo>0?2:0);
+      const s = 15;
       ctx.beginPath();
       ctx.moveTo(0,-s); ctx.lineTo(s,0); ctx.lineTo(0,s); ctx.lineTo(-s,0); ctx.closePath();
       ctx.fill();
